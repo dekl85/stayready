@@ -705,10 +705,37 @@ function ComplimentenTab({user}){
 }
 
 // ── VANDAAG (medewerker) ──────────────────────────────────────
-function VandaagMedewerker({briefingData}){
+function VandaagMedewerker({user}){
   const [sec,setSec]=useState("briefing");
-  const tip=briefingData?.tip||TIPS[new Date().getDay()%TIPS.length];
-  const gasten=briefingData?.gasten||[];
+  const [liveBriefing,setLiveBriefing]=useState(null);
+  const [loadingB,setLoadingB]=useState(true);
+
+  useEffect(()=>{
+    async function laadBriefing(){
+      try{
+        const data=await sb.get("briefings",`hotel_id=eq.${user?.hotel_id}&date=eq.${new Date().toISOString().split("T")[0]}`);
+        if(Array.isArray(data)&&data.length>0){
+          const b=data[0];
+          setLiveBriefing({
+            tip:TIPS[new Date().getDay()%TIPS.length],
+            aankondiging:JSON.parse(b.announcements||"[]")[0]?.tekst||"",
+            urgent:JSON.parse(b.announcements||"[]")[0]?.urgent||false,
+            gasten:JSON.parse(b.events||"[]"),
+            upsells:JSON.parse(b.upsells||"[]"),
+          });
+        }
+      }catch(e){console.log("Briefing laden fout:",e);}
+      setLoadingB(false);
+    }
+    laadBriefing();
+    // Ververs elke 30 seconden
+    const interval=setInterval(laadBriefing,30000);
+    return ()=>clearInterval(interval);
+  },[user?.hotel_id]);
+
+  const tip=liveBriefing?.tip||TIPS[new Date().getDay()%TIPS.length];
+  const gasten=liveBriefing?.gasten||[];
+  const briefingData=liveBriefing;
   const datum=new Date().toLocaleDateString("nl-NL",{weekday:"long",day:"numeric",month:"long"});
 
   return(
@@ -720,6 +747,7 @@ function VandaagMedewerker({briefingData}){
       </div>
 
       {sec==="briefing"&&(<>
+        {loadingB&&<div style={{...g.warm,display:"flex",gap:10,alignItems:"center",padding:"10px 14px",marginBottom:12}}><div style={{width:16,height:16,border:`2px solid ${C.g200}`,borderTopColor:C.terra,borderRadius:"50%",animation:"spin 0.8s linear infinite",flexShrink:0}}/><span style={{fontSize:12,fontFamily:sans,color:C.g600}}>Briefing laden...</span></div>}
         <div style={{background:`linear-gradient(135deg,${C.terra},${C.red})`,borderRadius:10,padding:"24px 20px",marginBottom:14,position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",top:-16,right:-16,fontSize:100,opacity:0.07,fontFamily:"serif",color:C.white,lineHeight:1}}>"</div>
           <div style={{fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:"rgba(255,255,255,0.6)",fontFamily:sans,marginBottom:10}}>Gastvrijheid van de dag</div>
@@ -782,7 +810,7 @@ function VandaagMedewerker({briefingData}){
 }
 
 // ── EMPLOYEE APP ──────────────────────────────────────────────
-function EmployeeApp({user,onLogout,sharedData}){
+function EmployeeApp({user,onLogout}){
   const [tab,setTab]=useState("vandaag");
   const teamData=sharedData?.team||[
     {id:1,naam:"Lena Visser",rol:"Chef de rang",afdeling:"Service",emoji:"🍷",specialiteit:"Wijnadvies",feitje:"Heeft gefietst door Japan",vandaag:true,complimenten:12,shift:"17:00–23:30",inDienst:"2 jaar",bg:C.terra},
@@ -804,7 +832,7 @@ function EmployeeApp({user,onLogout,sharedData}){
       </nav>
 
       <div style={g.page}>
-        {tab==="vandaag"&&(<><div style={g.h1}>Vandaag</div><div style={{...g.sub,marginBottom:16}}>{new Date().toLocaleDateString("nl-NL",{weekday:"long",day:"numeric",month:"long"})}</div><VandaagMedewerker briefingData={sharedData?.briefing}/></>)}
+        {tab==="vandaag"&&(<><div style={g.h1}>Vandaag</div><div style={{...g.sub,marginBottom:16}}>{new Date().toLocaleDateString("nl-NL",{weekday:"long",day:"numeric",month:"long"})}</div><VandaagMedewerker user={user}/></>)}
         {tab==="team"&&(
           <>
             <div style={g.h1}>Team</div>
@@ -849,7 +877,7 @@ function TeamSubTabs({user,teamData}){
 }
 
 // ── MANAGER APP ───────────────────────────────────────────────
-function ManagerApp({user,onLogout,sharedData,setSharedData}){
+function ManagerApp({user,onLogout}){
   const [tab,setTab]=useState("dashboard");
   const [toast,setToast]=useState("");
   const [modules,setModules]=useState([]);
@@ -900,11 +928,26 @@ function ManagerApp({user,onLogout,sharedData,setSharedData}){
     setLoading(false);
   }
 
-  function sla(msg="Opgeslagen ✓"){
+  async function sla(msg="Opgeslagen ✓"){
     setToast(msg);
     setTimeout(()=>setToast(""),2500);
-    // Sync naar medewerkers
-    setSharedData({briefing:{...briefing,gasten,upsells},team});
+    // Sla op in Supabase briefings tabel
+    try {
+      const bestaand = await sb.get("briefings", `hotel_id=eq.${user.hotel_id}&date=eq.${new Date().toISOString().split("T")[0]}`);
+      const payload = {
+        hotel_id: user.hotel_id,
+        date: new Date().toISOString().split("T")[0],
+        announcements: JSON.stringify([{tekst: briefing.aankondiging, urgent: briefing.urgent}].filter(a=>a.tekst)),
+        events: JSON.stringify(gasten),
+        specials: JSON.stringify([]),
+        upsells: JSON.stringify(upsells.filter(u=>u.actief)),
+      };
+      if (Array.isArray(bestaand) && bestaand.length > 0) {
+        await sb.patch("briefings", payload, `hotel_id=eq.${user.hotel_id}&date=eq.${new Date().toISOString().split("T")[0]}`);
+      } else {
+        await sb.post("briefings", payload);
+      }
+    } catch(e) { console.log("Briefing sync fout:", e); }
   }
 
   const avg=employees.length?Math.round(employees.reduce((a,e)=>a+(e.progress||0),0)/employees.length):0;
@@ -1234,9 +1277,7 @@ function ManagerApp({user,onLogout,sharedData,setSharedData}){
 // ── MAIN ──────────────────────────────────────────────────────
 export default function App(){
   const [user,setUser]=useState(null);
-  const [sharedData,setSharedData]=useState({briefing:null,team:null});
-
   if(!user) return <Login onLogin={setUser}/>;
-  if(user.role==="manager") return <ManagerApp user={user} onLogout={()=>setUser(null)} sharedData={sharedData} setSharedData={setSharedData}/>;
-  return <EmployeeApp user={user} onLogout={()=>setUser(null)} sharedData={sharedData}/>;
+  if(user.role==="manager") return <ManagerApp user={user} onLogout={()=>setUser(null)}/>;
+  return <EmployeeApp user={user} onLogout={()=>setUser(null)}/>;
 }
