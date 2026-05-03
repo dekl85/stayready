@@ -266,31 +266,94 @@ function ChatTab({user}){
   const [kanaal,setKanaal]=useState("algemeen");
   const [prive,setPrive]=useState(null);
   const [showPrive,setShowPrive]=useState(false);
-  const [berichten,setBerichten]=useState([
-    {id:1,naam:"Lena Visser",role:"Chef de rang",tekst:"Goede avond team! Tafel 12 viert jubileum — wie pakt dit op?",tijd:"17:15",bg:C.terra,kanaal:"algemeen",gelezen:[1,2]},
-    {id:2,naam:"Manager",role:"Manager",tekst:"Fatima, kun jij tafel 12 nemen? Ik heb iets speciaals geregeld.",tijd:"17:18",bg:C.red,kanaal:"algemeen",gelezen:[1]},
-    {id:3,naam:"Daan Mulder",role:"Sommelier",tekst:"Wagyu is uitverkocht na 20:00 — zeebaars of risotto aanprijzen.",tijd:"17:45",bg:C.black,kanaal:"keuken",gelezen:[1,3]},
-  ]);
+  const [berichten,setBerichten]=useState([]);
   const [tekst,setTekst]=useState("");
+  const [loading,setLoading]=useState(true);
+  const [nieuwCount,setNieuwCount]=useState(0);
   const bottomRef=useRef(null);
   const isManager=user?.role==="manager";
-  const kanalen=[{id:"algemeen",lbl:"Algemeen",ico:"users"},{id:"keuken",lbl:"Keuken",ico:"fire"},{id:"service",lbl:"Service",ico:"user"},{id:"manager",lbl:"Manager",ico:"star"}];
-  const teamleden=[{id:1,naam:"Lena Visser",rol:"Chef de rang",bg:C.terra},{id:2,naam:"Daan Mulder",rol:"Sommelier",bg:C.red},{id:3,naam:"Lars Bakker",rol:"Bar",bg:C.black}];
+  const kanalen=[
+    {id:"algemeen",lbl:"Algemeen",ico:"users"},
+    {id:"keuken",lbl:"Keuken",ico:"fire"},
+    {id:"service",lbl:"Service",ico:"user"},
+    {id:"manager",lbl:"Manager",ico:"star"},
+  ];
+  const teamleden=[
+    {id:1,naam:"Lena Visser",rol:"Chef de rang",bg:C.terra},
+    {id:2,naam:"Daan Mulder",rol:"Sommelier",bg:C.red},
+    {id:3,naam:"Lars Bakker",rol:"Bar",bg:C.black},
+  ];
+
+  // Laad berichten uit Supabase
+  async function laadBerichten(){
+    try{
+      const data=await sb.get("chat_messages",`hotel_id=eq.${user?.hotel_id}&order=created_at.asc&limit=100`);
+      if(Array.isArray(data)&&!data.error){
+        setBerichten(data);
+        // Toon notificatie als er nieuwe berichten zijn
+        const nieuw=data.filter(m=>m.naam!==user?.name&&!m.gelezen_door?.includes(user?.id));
+        if(nieuw.length>nieuwCount&&nieuwCount>0){
+          if(Notification?.permission==="granted"){
+            new Notification("ServeReady 💬",{body:`Nieuw bericht van ${nieuw[nieuw.length-1]?.naam}`});
+          }
+        }
+        setNieuwCount(nieuw.length);
+      }
+    }catch(e){
+      // Tabel bestaat nog niet — gebruik lokale demo berichten
+      setBerichten([
+        {id:1,naam:"Lena Visser",role:"Chef de rang",tekst:"Goede avond team! Tafel 12 viert jubileum — wie pakt dit op?",tijd:"17:15",bg:C.terra,kanaal:"algemeen"},
+        {id:2,naam:"Manager",role:"Manager",tekst:"Fatima, kun jij tafel 12 nemen?",tijd:"17:18",bg:C.red,kanaal:"algemeen"},
+      ]);
+    }
+    setLoading(false);
+  }
+
+  useEffect(()=>{
+    laadBerichten();
+    // Ververs elke 10 seconden
+    const interval=setInterval(laadBerichten,10000);
+    return ()=>clearInterval(interval);
+  },[user?.hotel_id]);
 
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[berichten,kanaal]);
 
-  function stuur(){
+  // Vraag notificatie toestemming
+  useEffect(()=>{
+    if(Notification?.permission==="default"){
+      Notification.requestPermission();
+    }
+  },[]);
+
+  async function stuur(){
     if(!tekst.trim())return;
-    setBerichten([...berichten,{id:Date.now(),naam:user?.name||"Jij",role:user?.department||"",tekst,tijd:new Date().toLocaleTimeString("nl-NL",{hour:"2-digit",minute:"2-digit"}),bg:C.terra,kanaal:prive||kanaal,gelezen:[],eigen:true}]);
+    const bericht={
+      hotel_id:user?.hotel_id,
+      naam:user?.name||"Anoniem",
+      role:user?.department||"",
+      tekst,
+      kanaal:prive||kanaal,
+      tijd:new Date().toLocaleTimeString("nl-NL",{hour:"2-digit",minute:"2-digit"}),
+      bg:C.terra,
+      gelezen_door:[user?.id],
+    };
+    // Optimistisch toevoegen
+    setBerichten(prev=>[...prev,{...bericht,id:Date.now(),eigen:true}]);
     setTekst("");
+    // Opslaan in Supabase
+    try{
+      await sb.post("chat_messages",bericht);
+    }catch(e){
+      console.log("Chat opslaan mislukt — tabel bestaat mogelijk nog niet:",e);
+    }
   }
 
   if(showPrive) return(
     <div>
-      <button onClick={()=>setShowPrive(false)} style={{...g.btnSmO,marginBottom:16}}>← Terug</button>
+      <button onClick={()=>setShowPrive(false)} style={{...g.btnSmO,marginBottom:16,width:"auto"}}>← Terug</button>
       <div style={{...g.h3,marginBottom:12}}>Privégesprek starten</div>
       {teamleden.map(m=>(
-        <div key={m.id} onClick={()=>{setPrive(`prive-${m.id}`);setShowPrive(false);}} style={{display:"flex",gap:12,alignItems:"center",padding:"12px 0",borderBottom:`1px solid ${C.g200}`,cursor:"pointer"}}>
+        <div key={m.id} onClick={()=>{setPrive("prive-"+m.id);setShowPrive(false);}} style={{display:"flex",gap:12,alignItems:"center",padding:"12px 0",borderBottom:"1px solid "+C.g200,cursor:"pointer"}}>
           <Avatar name={m.naam} size={40} bg={m.bg}/>
           <div style={{flex:1}}><div style={{fontFamily:abo,fontSize:14,textTransform:"uppercase"}}>{m.naam}</div><div style={{fontSize:12,color:C.g600,fontFamily:sans}}>{m.rol}</div></div>
           <Ic n="arrow" s={16} c={C.g400}/>
@@ -304,27 +367,28 @@ function ChatTab({user}){
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 160px)"}}>
       {!prive&&<div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto",paddingBottom:4}}>
         {kanalen.map(k=>(
-          <button key={k.id} onClick={()=>setKanaal(k.id)} style={{padding:"6px 12px",borderRadius:20,border:`1px solid ${kanaal===k.id?C.terra:C.g200}`,background:kanaal===k.id?C.terra:"transparent",color:kanaal===k.id?C.white:C.g600,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",fontFamily:sans}}>{k.lbl}</button>
+          <button key={k.id} onClick={()=>setKanaal(k.id)} style={{padding:"6px 12px",borderRadius:20,border:"1px solid "+(kanaal===k.id?C.terra:C.g200),background:kanaal===k.id?C.terra:"transparent",color:kanaal===k.id?C.white:C.g600,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",fontFamily:sans}}>{k.lbl}</button>
         ))}
-        <button onClick={()=>setShowPrive(true)} style={{padding:"6px 12px",borderRadius:20,border:`1px solid ${C.g200}`,background:"transparent",color:C.g600,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",fontFamily:sans}}>Privé</button>
+        <button onClick={()=>setShowPrive(true)} style={{padding:"6px 12px",borderRadius:20,border:"1px solid "+C.g200,background:"transparent",color:C.g600,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",fontFamily:sans}}>Privé</button>
       </div>}
       {prive&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"8px 12px",background:C.creamD,borderRadius:6}}>
         <Ic n="user" s={15} c={C.terra}/><span style={{fontSize:12,fontFamily:sans,color:C.terra,fontWeight:"bold"}}>Privégesprek</span>
         <button onClick={()=>setPrive(null)} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer"}}><Ic n="x" s={15} c={C.g400}/></button>
       </div>}
+      {loading&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"20px 0"}}><div style={{width:16,height:16,border:"2px solid "+C.g200,borderTopColor:C.terra,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/><span style={{fontSize:12,color:C.g400,fontFamily:sans}}>Berichten laden...</span></div>}
       <div style={{flex:1,overflowY:"auto",paddingBottom:12}}>
-        {gefilterd.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:C.g400,fontFamily:sans,fontSize:13}}>Nog geen berichten.</div>}
+        {!loading&&gefilterd.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:C.g400,fontFamily:sans,fontSize:13}}>Nog geen berichten in #{kanaal}</div>}
         {gefilterd.map(m=>{
           const eigen=m.naam===(user?.name)||m.eigen;
           return(
             <div key={m.id} style={{display:"flex",flexDirection:eigen?"row-reverse":"row",gap:10,marginBottom:14,alignItems:"flex-start"}}>
-              {!eigen&&<Avatar name={m.naam} size={34} bg={m.bg}/>}
+              {!eigen&&<Avatar name={m.naam} size={34} bg={m.bg||C.terra}/>}
               <div style={{maxWidth:"78%"}}>
                 {!eigen&&<div style={{display:"flex",gap:8,alignItems:"baseline",marginBottom:4}}><span style={{fontFamily:abo,fontSize:12,textTransform:"uppercase"}}>{m.naam}</span><span style={{fontSize:10,color:C.g400,fontFamily:sans}}>{m.role}</span></div>}
-                <div style={{background:eigen?C.terra:C.white,color:eigen?C.white:C.black,padding:"10px 14px",borderRadius:eigen?"14px 14px 4px 14px":"14px 14px 14px 4px",border:eigen?"none":`1px solid ${C.g200}`,fontSize:14,fontFamily:sans,lineHeight:1.6}}>{m.tekst}</div>
+                <div style={{background:eigen?C.terra:C.white,color:eigen?C.white:C.black,padding:"10px 14px",borderRadius:eigen?"14px 14px 4px 14px":"14px 14px 14px 4px",border:eigen?"none":"1px solid "+C.g200,fontSize:14,fontFamily:sans,lineHeight:1.6}}>{m.tekst}</div>
                 <div style={{display:"flex",gap:6,alignItems:"center",marginTop:4,justifyContent:eigen?"flex-end":"flex-start"}}>
                   <span style={{fontSize:10,color:C.g400,fontFamily:sans}}>{m.tijd}</span>
-                  {isManager&&m.gelezen?.length>0&&<span style={{fontSize:10,color:C.terra,fontFamily:sans}}>✓✓ {m.gelezen.length} gelezen</span>}
+                  {isManager&&<span style={{fontSize:10,color:C.terra,fontFamily:sans}}>✓✓</span>}
                 </div>
               </div>
             </div>
@@ -332,8 +396,8 @@ function ChatTab({user}){
         })}
         <div ref={bottomRef}/>
       </div>
-      <div style={{display:"flex",gap:10,alignItems:"center",paddingTop:10,borderTop:`1px solid ${C.g200}`}}>
-        <input style={{...g.input,flex:1,borderRadius:24,padding:"9px 16px"}} value={tekst} onChange={e=>setTekst(e.target.value)} onKeyDown={e=>e.key==="Enter"&&stuur()} placeholder={prive?"Privébericht...":`Bericht in #${kanaal}...`}/>
+      <div style={{display:"flex",gap:10,alignItems:"center",paddingTop:10,borderTop:"1px solid "+C.g200}}>
+        <input style={{...g.input,flex:1,borderRadius:24,padding:"9px 16px"}} value={tekst} onChange={e=>setTekst(e.target.value)} onKeyDown={e=>e.key==="Enter"&&stuur()} placeholder={prive?"Privébericht...":"Bericht in #"+kanaal+"..."}/>
         <button onClick={stuur} style={{width:40,height:40,borderRadius:"50%",background:C.terra,border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}><Ic n="send" s={15} c={C.white}/></button>
       </div>
     </div>
@@ -962,7 +1026,7 @@ function ManagerApp({user,onLogout}){
   const nieuwCount=employees.filter(e=>e.status==="nieuw").length;
   const actiefCount=employees.filter(e=>e.status==="actief").length;
 
-  const tabs=[["dashboard","grid","Dashboard"],["vandaag","spark","Briefing"],["menu","menu","Menu"],["team","users","Team"],["modules","train","Modules"]];
+  const tabs=[["dashboard","grid","Dashboard"],["vandaag","spark","Briefing"],["menu","menu","Menu"],["team","users","Team"],["chat","chat","Chat"],["modules","train","Modules"]];
 
   return(
     <div style={g.app}>
@@ -1242,6 +1306,15 @@ function ManagerApp({user,onLogout}){
               <button style={g.btn} onClick={()=>{if(!nieuwLid.naam)return;setTeam([...team,{...nieuwLid,id:Date.now()}]);setNieuwLid({naam:"",rol:"Bediening",afdeling:"Service",emoji:"🍷",specialiteit:"",feitje:"",vandaag:true,shift:"",inDienst:"",complimenten:0,bg:C.terra});sla("Teamlid toegevoegd ✓");}}><Ic n="plus" s={14} c={C.white}/>Toevoegen</button>
             </div>
           </Sectie>
+        )}
+
+        {/* ── CHAT ── */}
+        {tab==="chat"&&(
+          <>
+            <div style={g.h1}>Chat</div>
+            <div style={g.sub}>Team communicatie · Leesbevestigingen aan</div>
+            <ChatTab user={user}/>
+          </>
         )}
 
         {/* ── MODULES ── */}
