@@ -812,7 +812,18 @@ function VandaagMedewerker({user}){
 // ── EMPLOYEE APP ──────────────────────────────────────────────
 function EmployeeApp({user,onLogout}){
   const [tab,setTab]=useState("vandaag");
-  const teamData=sharedData?.team||[
+  const [crashFout,setCrashFout]=useState(null);
+
+  if(crashFout) return(
+    <div style={{fontFamily:"sans-serif",padding:24,maxWidth:430,margin:"40px auto"}}>
+      <div style={{background:"#fff0f0",border:"1px solid #fca5a5",borderRadius:8,padding:20,marginBottom:16}}>
+        <div style={{fontWeight:"bold",color:"#b91c1c",marginBottom:8}}>Er ging iets mis</div>
+        <div style={{fontSize:13,color:"#7f1d1d",lineHeight:1.7,fontFamily:"monospace"}}>{crashFout}</div>
+      </div>
+      <button onClick={onLogout} style={{background:"#c96949",color:"white",border:"none",borderRadius:6,padding:"11px 20px",cursor:"pointer",fontSize:13}}>Opnieuw inloggen</button>
+    </div>
+  );
+  const teamData=[
     {id:1,naam:"Lena Visser",rol:"Chef de rang",afdeling:"Service",emoji:"🍷",specialiteit:"Wijnadvies",feitje:"Heeft gefietst door Japan",vandaag:true,complimenten:12,shift:"17:00–23:30",inDienst:"2 jaar",bg:C.terra},
     {id:2,naam:"Daan Mulder",rol:"Sommelier",afdeling:"Service",emoji:"🍇",specialiteit:"Natuurwijnen",feitje:"Maakt zelf wijn in zijn garage",vandaag:true,complimenten:24,shift:"17:00–23:30",inDienst:"4 jaar",bg:C.red},
     {id:3,naam:"Fatima El-Hassan",rol:"Bediening",afdeling:"Service",emoji:"🌸",specialiteit:"Allergenen",feitje:"Bakt elke vrijdag brood voor het team",vandaag:true,complimenten:8,shift:"17:30–23:00",inDienst:"1 jaar",bg:C.g600},
@@ -837,11 +848,6 @@ function EmployeeApp({user,onLogout}){
           <>
             <div style={g.h1}>Team</div>
             <div style={{...g.sub,marginBottom:16}}>Smoelenboek · Complimenten · Feedback</div>
-            <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
-              {[["smoelen","Smoelenboek"],["complimenten","Complimenten"]].map(([k,l])=>(
-                <button key={k} id={`team-${k}`} onClick={e=>{document.querySelectorAll('[id^="team-"]').forEach(b=>b.style.background="transparent");e.target.style.background=C.terra;e.target.style.color=C.white;}} style={{padding:"6px 13px",borderRadius:20,border:`1px solid ${k==="smoelen"?C.terra:C.g200}`,background:k==="smoelen"?C.terra:"transparent",color:k==="smoelen"?C.white:C.g600,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",fontFamily:sans}}>{l}</button>
-              ))}
-            </div>
             <TeamSubTabs user={user} teamData={teamData}/>
           </>
         )}
@@ -863,14 +869,15 @@ function EmployeeApp({user,onLogout}){
 
 function TeamSubTabs({user,teamData}){
   const [sub,setSub]=useState("smoelen");
+  const safeTeam = Array.isArray(teamData) ? teamData : [];
   return(
     <>
       <div style={{display:"flex",gap:6,marginBottom:16}}>
-        {[["smoelen","👥 Smoelenboek"],["complimenten","💬 Complimenten"]].map(([k,l])=>(
+        {[["smoelen","Smoelenboek"],["complimenten","Complimenten"]].map(([k,l])=>(
           <button key={k} onClick={()=>setSub(k)} style={{padding:"6px 13px",borderRadius:20,border:`1px solid ${sub===k?C.terra:C.g200}`,background:sub===k?C.terra:"transparent",color:sub===k?C.white:C.g600,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",fontFamily:sans}}>{l}</button>
         ))}
       </div>
-      {sub==="smoelen"&&<Smoelenboek user={user} teamData={teamData}/>}
+      {sub==="smoelen"&&<Smoelenboek user={user} teamData={safeTeam}/>}
       {sub==="complimenten"&&<ComplimentenTab user={user}/>}
     </>
   );
@@ -1277,7 +1284,27 @@ function ManagerApp({user,onLogout}){
 // ── MAIN ──────────────────────────────────────────────────────
 export default function App(){
   const [user,setUser]=useState(null);
-  if(!user) return <Login onLogin={setUser}/>;
+  const [fout,setFout]=useState(null);
+
+  function handleLogin(userData){
+    try{
+      if(!userData) throw new Error("Geen gebruikersdata ontvangen.");
+      if(!userData.hotel_id) throw new Error("Geen hotel_id gevonden. Controleer de employees tabel in Supabase.");
+      setFout(null); setUser(userData);
+    }catch(e){ setFout(e.message); }
+  }
+
+  if(fout) return(
+    <div style={{fontFamily:"sans-serif",padding:24,maxWidth:430,margin:"40px auto"}}>
+      <div style={{background:"#fff0f0",border:"1px solid #fca5a5",borderRadius:8,padding:20,marginBottom:16}}>
+        <div style={{fontWeight:"bold",color:"#b91c1c",marginBottom:8}}>Inloggen mislukt</div>
+        <div style={{fontSize:13,color:"#7f1d1d",lineHeight:1.7}}>{fout}</div>
+      </div>
+      <button onClick={()=>{setFout(null);setUser(null);}} style={{background:"#c96949",color:"white",border:"none",borderRadius:6,padding:"11px 20px",cursor:"pointer",fontSize:13}}>Terug naar inloggen</button>
+    </div>
+  );
+
+  if(!user) return <Login onLogin={handleLogin}/>;
   if(user.role==="manager") return <ManagerApp user={user} onLogout={()=>setUser(null)}/>;
   return <EmployeeApp user={user} onLogout={()=>setUser(null)}/>;
 }
